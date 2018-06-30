@@ -7,7 +7,7 @@
 #include <unistd.h>
 
 
-#define QUEUE_SIZE	16
+#define QUEUE_SIZE	0x10
 #define NODE_SIZE	0x1000
 
 
@@ -16,7 +16,7 @@
 #define GET_NUM_OF_OCCUPIED_NODE(HEAD, TAIL, SIZE)	\
 	(HEAD >= TAIL) ? HEAD - TAIL : HEAD + SIZE - TAIL;
 #define GET_NUM_OF_EMPTY_NODE(HEAD, TAIL, SIZE)		\
-	(TAIL >  HEAD) ? TAIL - HEAD : TAIL + SIZE - HEAD;
+	(TAIL >  HEAD) ? TAIL - HEAD - 1: TAIL + SIZE - HEAD - 1;
 
 
 //TODO Define global data structures to be used
@@ -53,28 +53,6 @@ void process_data(char *buffer, int bufferSizeInBytes)
 }
 
 
-void push_data(char *buffer, int bufferSizeInBytes)
-{
-	int num_of_empty_node;
-
-	pthread_mutex_lock(&head_lock);
-
-	num_of_empty_node = GET_NUM_OF_EMPTY_NODE(queue_head, queue_tail, QUEUE_SIZE);
-	while (num_of_empty_node == 0) {
-		sleep(1);
-		num_of_empty_node = GET_NUM_OF_EMPTY_NODE(queue_head, queue_tail, QUEUE_SIZE);
-	}
-
-	data_queue[queue_head].buffer = buffer;
-	data_queue[queue_head].bufferSizeInBytes = bufferSizeInBytes;
-
-	printf("%s : 0x%X -- 0x%X\n", __FUNCTION__, (int)(uintptr_t)buffer, bufferSizeInBytes);
-
-	queue_head = INCREASE_QUEUE_INDEX(queue_head, QUEUE_SIZE);
-
-	pthread_mutex_unlock(&head_lock);
-}
-
 void pop_data(char **buffer, int *bufferSizeInBytes)
 {
 	int num_of_occupied_node;
@@ -84,17 +62,37 @@ void pop_data(char **buffer, int *bufferSizeInBytes)
 	num_of_occupied_node = GET_NUM_OF_OCCUPIED_NODE(queue_head, queue_tail, QUEUE_SIZE);
 	while (num_of_occupied_node == 0) {
 		sleep(1);
+		printf("%s : %d -- %d\n", __FUNCTION__, queue_head, queue_tail);
 		num_of_occupied_node = GET_NUM_OF_OCCUPIED_NODE(queue_head, queue_tail, QUEUE_SIZE);
 	}
 
 	*buffer = data_queue[queue_tail].buffer;
 	*bufferSizeInBytes = data_queue[queue_tail].bufferSizeInBytes;
 
-	printf("%s : 0x%X -- 0x%X\n", __FUNCTION__, (int)(uintptr_t)*buffer, *bufferSizeInBytes);
-
 	queue_tail = INCREASE_QUEUE_INDEX(queue_tail, QUEUE_SIZE);
 
 	pthread_mutex_unlock(&tail_lock);
+}
+
+void push_data(char *buffer, int bufferSizeInBytes)
+{
+	int num_of_empty_node;
+
+	pthread_mutex_lock(&head_lock);
+
+	num_of_empty_node = GET_NUM_OF_EMPTY_NODE(queue_head, queue_tail, QUEUE_SIZE);
+	while (num_of_empty_node == 0) {
+		sleep(1);
+		printf("%s : %d -- %d\n", __FUNCTION__, queue_head, queue_tail);
+		num_of_empty_node = GET_NUM_OF_EMPTY_NODE(queue_head, queue_tail, QUEUE_SIZE);
+	}
+
+	data_queue[queue_head].buffer = buffer;
+	data_queue[queue_head].bufferSizeInBytes = bufferSizeInBytes;
+
+	queue_head = INCREASE_QUEUE_INDEX(queue_head, QUEUE_SIZE);
+
+	pthread_mutex_unlock(&head_lock);
 }
 
 
@@ -110,8 +108,10 @@ void *reader_thread(void *arg) {
 	while (1) {
 		//TODO: Define data extraction (queue) and processing 
 		pop_data(&buffer, &data_size);
+		printf("%s(%d) : 0x%X -- 0x%X\n", __FUNCTION__, *((int*)arg), (int)(uintptr_t)buffer, data_size);
+
 		process_data(buffer, data_size);
-		
+
 		free(buffer);
 	}
 	
@@ -140,6 +140,7 @@ void *writer_thread(void *arg) {
 		}
 
 		push_data(buffer, data_size);
+		printf("%s(%d) : 0x%X -- 0x%X\n", __FUNCTION__, *((int*)arg), (int)(uintptr_t)buffer, data_size);
 	}
 	
 	return NULL;
@@ -152,20 +153,23 @@ int main(int argc, char **argv) {
 	int i;
 	pthread_t thread_t_reader[N];
 	pthread_t thread_t_writer[M];
+	int id[N+M];
 	int status;
 
 	pthread_mutex_init(&head_lock, NULL);
 	pthread_mutex_init(&tail_lock, NULL);
 	
 	for (i = 0; i < N; i++) { 
-		if (pthread_create(&thread_t_reader[i], NULL, reader_thread, NULL) < 0)
+		id[i] = i;
+		if (pthread_create(&thread_t_reader[i], NULL, reader_thread, &id[i]) < 0)
 		{
 			perror("thread create error:");
 			exit(0);
 		}
 	}
 	for (i = 0; i < M; i++) { 
-		if (pthread_create(&thread_t_writer[i], NULL, writer_thread, NULL) < 0)
+		id[i + N] = i + N;
+		if (pthread_create(&thread_t_writer[i], NULL, writer_thread, &id[i + N]) < 0)
 		{
 			perror("thread create error:");
 			exit(0);
